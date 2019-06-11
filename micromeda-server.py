@@ -7,17 +7,44 @@ Description: The server side implementation for Micromeda.
 
 Requirements: - Refer to README
 """
+import os
 
 from flask import Flask, request
 from flask_restful import Resource, Api
-from pygenprop.flat_file_parser import parse_genome_property_file
+from sqlalchemy import create_engine
+from pygenprop.results import load_assignment_caches_from_database_with_matches
+from pygenprop.results import GenomePropertiesResultsWithMatches
+from pygenprop.database_file_parser import parse_genome_properties_flat_file
+from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
 api = Api(app)
 
-with open('testing/test_files/genomeProperties.txt') as genome_properties_file:
-    genome_properties_tree = parse_genome_property_file(genome_properties_file)
+properties_path = '/Users/lee/Dropbox/RandD/Repositories/micromeda-server/testing/test_files/genomeProperties.txt'
+with open(properties_path) as genome_properties_file:
+    genome_properties_tree = parse_genome_properties_flat_file(genome_properties_file)
 
+path_sqlite_file = '/Users/lee/Dropbox/RandD/Repositories/micromeda-server/testing/test_files/data.micro'
+engine_url = 'sqlite:////' + path_sqlite_file
+engine = create_engine(engine_url)
+
+results = GenomePropertiesResultsWithMatches(*load_assignment_caches_from_database_with_matches(engine),
+                                             properties_tree=genome_properties_tree)
+tree_json = results.to_json()
+
+uploads = []
+
+
+
+class GenomePropertyTreeResource(Resource):
+
+    def get(self):
+        response = app.response_class(
+            response=tree_json,
+            status=200,
+            mimetype='application/json'
+        )
+        return response
 
 class GenomePropertyResource(Resource):
     """A rest resource for individual genome properties."""
@@ -37,7 +64,8 @@ class GenomePropertyResource(Resource):
                     if 'gp_id' in parameter:
                         genome_property = genome_properties_tree[property_id]
                         if genome_property:
-                            genome_property_info[genome_property.id] = self.generate_genome_property_info_json(genome_property)
+                            genome_property_info[genome_property.id] = self.generate_genome_property_info_json(
+                                genome_property)
             else:
                 genome_property_info = {genome_property.id: self.generate_genome_property_info_json(genome_property) for
                                         genome_property in genome_properties_tree}
@@ -76,6 +104,7 @@ class GenomePropertyResource(Resource):
 
 
 api.add_resource(GenomePropertyResource, '/genome_properties/<string:property_id>', '/genome_properties')
+api.add_resource(GenomePropertyTreeResource, '/genome_properties_tree')
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
