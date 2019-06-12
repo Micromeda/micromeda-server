@@ -50,7 +50,22 @@ def create_app(config):
 
     @app.route('/upload', methods=['GET'])
     def get_tree():
-        pass
+        session_result = session.get('result')
+        default_result = app.config['DEFAULT_RESULTS']
+
+        if session_result is not None:
+            tree_json = session_result.to_json()
+        elif default_result is not None:
+            tree_json = default_result.to_json()
+        else:
+            tree_json = None
+
+        if tree_json:
+            response = app.response_class(response=tree_json, status=200, mimetype='application/json')
+        else:
+            response = app.response_class(response='No tree found.', status=404)
+
+        return response
 
     return app
 
