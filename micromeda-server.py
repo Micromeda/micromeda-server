@@ -9,23 +9,33 @@ Requirements: - Refer to README
 """
 
 import argparse
+import io
 import os
-from flask import Flask, session, request
-from werkzeug.utils import secure_filename
+import uuid
+
+from flask import Flask, session, request, jsonify, send_file
 from pygenprop.database_file_parser import parse_genome_properties_flat_file
 from pygenprop.results import GenomePropertiesResultsWithMatches
 from pygenprop.results import load_assignment_caches_from_database_with_matches
 from sqlalchemy import create_engine
+from werkzeug.utils import secure_filename
 
+RESULTS_DICT = {}
 
 def create_app(config):
-    app = Flask(__name__)
+    """
+    Creates a flask app for the micromeda-server.
+
+    :param config: A configuration dictionary containing info required by the app.
+    :return: The app object.
+    """
+    flask_app = Flask(__name__)
 
     properties_tree = parse_genome_properties_database(config.input_genome_properties_flat_file)
 
-    app.secret_key = config.secret_key
-    app.config['UPLOAD_FOLDER'] = sanitize_cli_path(config.uploads_folder)
-    app.config['PROPERTIES_TREE'] = properties_tree
+    flask_app.secret_key = config.secret_key
+    flask_app.config['UPLOAD_FOLDER'] = sanitize_cli_path(config.uploads_folder)
+    flask_app.config['PROPERTIES_TREE'] = properties_tree
 
     if config.input_genome_properties_assignment_file is not None:
         default_results = extract_results_from_micromeda_file(config.input_genome_properties_assignment_file,
@@ -33,25 +43,40 @@ def create_app(config):
     else:
         default_results = None
 
-    app.config['DEFAULT_RESULTS'] = default_results
+    flask_app.config['DEFAULT_RESULTS'] = default_results
 
-    @app.route('/upload', methods=['GET', 'POST'])
+    @flask_app.route('/upload', methods=['GET', 'POST'])
     def upload():
+        """
+        An endpoint for uploading micromeda files.
+        """
+        print(session)
+        
         file = request.files['file']
 
         if allowed_file(file.filename):
             filename = secure_filename(file.filename)
-            out_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            out_path = os.path.join(flask_app.config['UPLOAD_FOLDER'], filename)
             file.save(out_path)
-            result = extract_results_from_micromeda_file(out_path, app.config['PROPERTIES_TREE'])
+            result = extract_results_from_micromeda_file(out_path, flask_app.config['PROPERTIES_TREE'])
             os.remove(out_path)
 
-            session['result'] = result
+            result_key = uuid.uuid4().hex
+            RESULTS_DICT[result_key] = result
+            session['results_key'] = result_key
 
-    @app.route('/upload', methods=['GET'])
+        return 'OK'
+
+    @flask_app.route('/genome_properties_tree', methods=['GET'])
     def get_tree():
-        session_result = session.get('result')
-        default_result = app.config['DEFAULT_RESULTS']
+        """
+        An endpoint for getting the genome properties tree from micromeda-server.
+
+        :return: The genome properties tree, with assignments, as JSON.
+        """
+        print(session)
+        session_result = RESULTS_DICT[session['results_key']]
+        default_result = flask_app.config['DEFAULT_RESULTS']
 
         if session_result is not None:
             tree_json = session_result.to_json()
@@ -61,15 +86,122 @@ def create_app(config):
             tree_json = None
 
         if tree_json:
-            response = app.response_class(response=tree_json, status=200, mimetype='application/json')
+            response = flask_app.response_class(response=tree_json, status=200, mimetype='application/json')
         else:
-            response = app.response_class(response='No tree found.', status=404)
+            response = flask_app.response_class(response='No tree found.', status=404)
 
         return response
 
-    return app
+    @flask_app.route('/genome_properties/<string:property_id>')
+    def get_single_genome_property_info(property_id=None):
+        """
+        Gathers information for a specific genome property.
+
+        :param property_id: The genome property identifier of the property for which we are grabbing information.
+        :return: The info about the genome property.
+        """
+        tree = flask_app.config['PROPERTIES_TREE']
+
+        genome_property_info = {}
+        if property_id:
+            genome_property = tree[property_id]
+            if genome_property:
+                genome_property_info = generate_genome_property_info_json(genome_property)
+
+        return jsonify(genome_property_info)
+
+    @flask_app.route('/genome_properties', methods=['GET'])
+    def get_multiple_genome_property_info():
+        """
+        Gathers information for multiple genome properties.
+
+        :return: The info about the genome property.
+        """
+        tree = flask_app.config['PROPERTIES_TREE']
+        url_args = request.args
+        genome_property_info = {}
+        if url_args:
+            for parameter, property_id in url_args.items():
+                if 'gp_id' in parameter:
+                    genome_property = tree[property_id]
+                    if genome_property:
+                        genome_property_info[genome_property.id] = generate_genome_property_info_json(
+                            genome_property)
+        else:
+            genome_property_info = {genome_property.id: generate_genome_property_info_json(genome_property) for
+                                    genome_property in tree}
+        return jsonify(genome_property_info)
+
+    @flask_app.route('/fasta/<string:property_id>/<int:step_number>')
+    def get_fasta(property_id, step_number):
+        """
+        Sends a FASTA file to the user containing proteins that support a step.
+
+        :param property_id: The identifier of the genome property.
+        :param step_number: The step number of the step.
+        :return: A FASTA file encoding for
+        """
+        session_result = RESULTS_DICT[session['results_key']]
+        default_result = flask_app.config['DEFAULT_RESULTS']
+
+        text_stream = io.StringIO()
+        binary_stream = io.BytesIO()
+
+        if session_result is not None:
+            session_result.write_supporting_proteins_for_step_fasta(text_stream, property_id, step_number, top=True)
+            binary_stream.write(text_stream.getvalue().encode())
+            binary_stream.seek(0)
+        else:
+            default_result.write_supporting_proteins_for_step_fasta(text_stream, property_id, step_number, top=True)
+            binary_stream.write(text_stream.getvalue().encode())
+            binary_stream.seek(0)
+
+        text_stream.close()
+
+        return send_file(
+            binary_stream,
+            as_attachment=True,
+            attachment_filename=property_id + '_' + str(step_number) + '.faa',
+            mimetype='text/x-fasta'
+        )
+
+    return flask_app
+
+
+def generate_genome_property_info_json(genome_property):
+    """
+    Generates a json dict containing information about a genome property.
+
+    :param genome_property: The input genome property.
+    :return:
+    """
+    property_name = genome_property.name
+    description = genome_property.description
+    literature = [reference.pubmed_id for reference in genome_property.references]
+
+    databases_info = {}
+    databases = genome_property.databases
+
+    if databases:
+        for database_reference in databases:
+            database_name = database_reference.database_name
+            identifiers = database_reference.record_ids
+
+            if database_name in databases_info.keys():
+                databases_info[database_name].append(identifiers)
+            else:
+                databases_info[database_name] = identifiers
+
+    return {'name': property_name, 'description': description, 'pubmed': literature, 'databases': databases_info}
+
 
 def parse_genome_properties_database(genome_properties_flat_file_path):
+    """
+    Loads the genome properties tree from a file.
+
+    :param genome_properties_flat_file_path: The path to the genome properties flat file.
+    :return: A genome properties tree object.
+    """
     sanitized_path = sanitize_cli_path(genome_properties_flat_file_path)
     with open(sanitized_path) as genome_properties_file:
         genome_properties_tree = parse_genome_properties_flat_file(genome_properties_file)
@@ -77,14 +209,29 @@ def parse_genome_properties_database(genome_properties_flat_file_path):
 
 
 def extract_results_from_micromeda_file(micromeda_file_path, genome_properties_tree):
+    """
+    Loads the micromeda file into the app.
+
+    :param micromeda_file_path: The file path to the genome properties file.
+    :param genome_properties_tree: The genome properties tree.
+    :return: A genome properties results object.
+    """
     sanitized_path = sanitize_cli_path(micromeda_file_path)
     engine = create_engine('sqlite:////' + sanitized_path)
     caches = load_assignment_caches_from_database_with_matches(engine)
     results = GenomePropertiesResultsWithMatches(*caches, properties_tree=genome_properties_tree)
     return results
 
+
 def allowed_file(filename):
+    """
+    Checks that the uploaded file's extension is allowed.
+
+    :param filename: The uploaded file's name.
+    :return: True if the file name has a micro, sqlite, or sqlite3 file extension.
+    """
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in {'micro', 'sqlite', 'sqlite3'}
+
 
 def sanitize_cli_path(cli_path):
     """
@@ -93,8 +240,7 @@ def sanitize_cli_path(cli_path):
     :param cli_path: The path to expand
     :return: An expanded path.
     """
-    sanitized_path = path.expanduser(path.expandvars(cli_path))
-    return sanitized_path
+    return os.path.abspath(os.path.expanduser(os.path.expandvars(cli_path)))
 
 
 if __name__ == '__main__':
@@ -104,7 +250,7 @@ if __name__ == '__main__':
     parser.add_argument("-p", "--port", action="store", metavar='PORT', default=5000, type=int,
                         help='The port on the server for which micromeda-server shall run on.')
 
-    parser.add_argument("-h", "--host", action="store", metavar='HOST', default='0.0.0.0', type=str,
+    parser.add_argument("-a", "--host_ip", action="store", metavar='HOST', default='0.0.0.0', type=str,
                         help='The IP address of the server for which micromeda-server shall run on.')
 
     parser.add_argument('-d', '--input_genome_properties_flat_file', metavar='DB', required=True,
@@ -124,4 +270,4 @@ if __name__ == '__main__':
     cli_args = parser.parse_args()
 
     app = create_app(config=cli_args)
-    app.run(host='0.0.0.0', port=cli_args.port, debug=cli_args.debug)
+    app.run(host=cli_args.host_ip, port=cli_args.port, debug=cli_args.debug)
