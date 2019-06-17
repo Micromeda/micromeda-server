@@ -5,3 +5,4 @@ Flask==1.0.2
 flask-restful==0.3.6
 Flask-Login==0.4.1
 werkzeug==0.14.1
+cachetools==3.1.1

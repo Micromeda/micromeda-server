@@ -13,14 +13,18 @@ import io
 import os
 import uuid
 
-from flask import Flask, session, request, jsonify, send_file
+from flask import Flask, request, jsonify, send_file
 from pygenprop.database_file_parser import parse_genome_properties_flat_file
 from pygenprop.results import GenomePropertiesResultsWithMatches
 from pygenprop.results import load_assignment_caches_from_database_with_matches
 from sqlalchemy import create_engine
 from werkzeug.utils import secure_filename
+from cachetools import TTLCache
+from threading import RLock
 
-RESULTS_DICT = {}
+LOCK = RLock()
+RESULTS_CACHE = TTLCache(maxsize=100, ttl=1800)
+
 
 def create_app(config):
     """
@@ -50,8 +54,7 @@ def create_app(config):
         """
         An endpoint for uploading micromeda files.
         """
-        print(session)
-        
+
         file = request.files['file']
 
         if allowed_file(file.filename):
@@ -62,10 +65,12 @@ def create_app(config):
             os.remove(out_path)
 
             result_key = uuid.uuid4().hex
-            RESULTS_DICT[result_key] = result
-            session['results_key'] = result_key
+            save_to_cache(result, result_key)
+            response = jsonify({'result_key': result_key})
+        else:
+            response = flask_app.response_class(response='Upload failed', status=404)
 
-        return 'OK'
+        return response
 
     @flask_app.route('/genome_properties_tree', methods=['GET'])
     def get_tree():
@@ -74,19 +79,10 @@ def create_app(config):
 
         :return: The genome properties tree, with assignments, as JSON.
         """
-        print(session)
-        session_result = RESULTS_DICT[session['results_key']]
-        default_result = flask_app.config['DEFAULT_RESULTS']
+        result = get_result_from_cache(flask_app.config['DEFAULT_RESULTS'], request.args.get('result_key'))
 
-        if session_result is not None:
-            tree_json = session_result.to_json()
-        elif default_result is not None:
-            tree_json = default_result.to_json()
-        else:
-            tree_json = None
-
-        if tree_json:
-            response = flask_app.response_class(response=tree_json, status=200, mimetype='application/json')
+        if result is not None:
+            response = flask_app.response_class(response=(result.to_json()), status=200, mimetype='application/json')
         else:
             response = flask_app.response_class(response='No tree found.', status=404)
 
@@ -132,7 +128,7 @@ def create_app(config):
                                     genome_property in tree}
         return jsonify(genome_property_info)
 
-    @flask_app.route('/fasta/<string:property_id>/<int:step_number>')
+    @flask_app.route('/fasta/<string:property_id>/<int:step_number>', methods=['GET'])
     def get_fasta(property_id, step_number):
         """
         Sends a FASTA file to the user containing proteins that support a step.
@@ -141,18 +137,13 @@ def create_app(config):
         :param step_number: The step number of the step.
         :return: A FASTA file encoding for
         """
-        session_result = RESULTS_DICT[session['results_key']]
-        default_result = flask_app.config['DEFAULT_RESULTS']
+        result = get_result_from_cache(flask_app.config['DEFAULT_RESULTS'], request.args.get('result_key'))
 
         text_stream = io.StringIO()
         binary_stream = io.BytesIO()
 
-        if session_result is not None:
-            session_result.write_supporting_proteins_for_step_fasta(text_stream, property_id, step_number, top=True)
-            binary_stream.write(text_stream.getvalue().encode())
-            binary_stream.seek(0)
-        else:
-            default_result.write_supporting_proteins_for_step_fasta(text_stream, property_id, step_number, top=True)
+        if result is not None:
+            result.write_supporting_proteins_for_step_fasta(text_stream, property_id, step_number, top=True)
             binary_stream.write(text_stream.getvalue().encode())
             binary_stream.seek(0)
 
@@ -241,6 +232,25 @@ def sanitize_cli_path(cli_path):
     :return: An expanded path.
     """
     return os.path.abspath(os.path.expanduser(os.path.expandvars(cli_path)))
+
+
+def save_to_cache(result, result_key):
+    with LOCK:
+        RESULTS_CACHE[result_key] = result
+
+
+def get_result_from_cache(default_results, results_key=None):
+    global RESULTS_CACHE
+
+    if results_key:
+        with LOCK:
+            result = RESULTS_CACHE.get(results_key)
+    elif default_results is not None:
+        result = default_results
+    else:
+        result = None
+
+    return result
 
 
 if __name__ == '__main__':
