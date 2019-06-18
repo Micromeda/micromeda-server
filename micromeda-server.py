@@ -80,7 +80,7 @@ def create_app(config):
         """
         global REDIS_CACHE
         result = get_result_cached_or_default(redis_cache=REDIS_CACHE,
-                                              properties_tree=flask_app.config['DEFAULT_RESULTS'],
+                                              properties_tree=flask_app.config['PROPERTIES_TREE'],
                                               results_key=request.args.get('result_key'),
                                               default_results=flask_app.config['DEFAULT_RESULTS'])
         if result is not None:
@@ -148,8 +148,16 @@ def create_app(config):
         text_stream = io.StringIO()
         binary_stream = io.BytesIO()
 
+        all_result = request.args.get('all')
+        if all_result == 'true':
+            top = False
+            file_designator = 'all'
+        else:
+            top = True
+            file_designator = 'top'
+
         if result is not None:
-            result.write_supporting_proteins_for_step_fasta(text_stream, property_id, step_number, top=True)
+            result.write_supporting_proteins_for_step_fasta(text_stream, property_id, step_number, top=top)
             binary_stream.write(text_stream.getvalue().encode())
             binary_stream.seek(0)
 
@@ -158,7 +166,7 @@ def create_app(config):
         return send_file(
             binary_stream,
             as_attachment=True,
-            attachment_filename=property_id + '_' + str(step_number) + '.faa',
+            attachment_filename=property_id + '_' + str(step_number) + '_' + file_designator + '.faa',
             mimetype='text/x-fasta'
         )
 
@@ -273,15 +281,18 @@ def get_result_cached_or_default(redis_cache, properties_tree, results_key=None,
 
 
 def get_result_from_cache(key, redis_cache, properties_tree):
-    stored_dataframes = pd.read_msgpack(redis_cache.get(key))
-    property_results = stored_dataframes[0]
-    step_results = stored_dataframes[1]
-    step_matches = stored_dataframes[2]
+    cached_results = redis_cache.get(key)
+    if cached_results is not None:
+        stored_dataframes = pd.read_msgpack(cached_results)
+        property_results = stored_dataframes[0]
+        step_results = stored_dataframes[1]
+        step_matches = stored_dataframes[2]
 
-    return GenomePropertiesResultsWithMatchesCached(property_results,
-                                                    step_results,
-                                                    step_matches,
-                                                    properties_tree)
+        result = GenomePropertiesResultsWithMatchesCached(property_results, step_results, step_matches, properties_tree)
+    else:
+        result = None
+
+    return result
 
 
 if __name__ == '__main__':
