@@ -13,17 +13,16 @@ import io
 import os
 import uuid
 
+import pandas as pd
+import redis
 from flask import Flask, request, jsonify, send_file
 from pygenprop.database_file_parser import parse_genome_properties_flat_file
 from pygenprop.results import GenomePropertiesResultsWithMatches
 from pygenprop.results import load_assignment_caches_from_database_with_matches
 from sqlalchemy import create_engine
 from werkzeug.utils import secure_filename
-from cachetools import TTLCache
-from threading import RLock
 
-LOCK = RLock()
-RESULTS_CACHE = TTLCache(maxsize=100, ttl=1800)
+REDIS_CACHE = redis.Redis(host='localhost', port=6379, db=0)  # TODO: Add these parameters from args or config file.
 
 
 def create_app(config):
@@ -54,6 +53,7 @@ def create_app(config):
         """
         An endpoint for uploading micromeda files.
         """
+        global REDIS_CACHE
 
         file = request.files['file']
 
@@ -64,8 +64,7 @@ def create_app(config):
             result = extract_results_from_micromeda_file(out_path, flask_app.config['PROPERTIES_TREE'])
             os.remove(out_path)
 
-            result_key = uuid.uuid4().hex
-            save_to_cache(result, result_key)
+            result_key = cache_result(result, REDIS_CACHE)
             response = jsonify({'result_key': result_key})
         else:
             response = flask_app.response_class(response='Upload failed', status=404)
@@ -79,8 +78,11 @@ def create_app(config):
 
         :return: The genome properties tree, with assignments, as JSON.
         """
-        result = get_result_from_cache(flask_app.config['DEFAULT_RESULTS'], request.args.get('result_key'))
-
+        global REDIS_CACHE
+        result = get_result_cached_or_default(redis_cache=REDIS_CACHE,
+                                              properties_tree=flask_app.config['DEFAULT_RESULTS'],
+                                              results_key=request.args.get('result_key'),
+                                              default_results=flask_app.config['DEFAULT_RESULTS'])
         if result is not None:
             response = flask_app.response_class(response=(result.to_json()), status=200, mimetype='application/json')
         else:
@@ -137,7 +139,11 @@ def create_app(config):
         :param step_number: The step number of the step.
         :return: A FASTA file encoding for
         """
-        result = get_result_from_cache(flask_app.config['DEFAULT_RESULTS'], request.args.get('result_key'))
+        global REDIS_CACHE
+        result = get_result_cached_or_default(redis_cache=REDIS_CACHE,
+                                              properties_tree=flask_app.config['DEFAULT_RESULTS'],
+                                              results_key=request.args.get('result_key'),
+                                              default_results=flask_app.config['DEFAULT_RESULTS'])
 
         text_stream = io.StringIO()
         binary_stream = io.BytesIO()
@@ -234,23 +240,48 @@ def sanitize_cli_path(cli_path):
     return os.path.abspath(os.path.expanduser(os.path.expandvars(cli_path)))
 
 
-def save_to_cache(result, result_key):
-    with LOCK:
-        RESULTS_CACHE[result_key] = result
+class GenomePropertiesResultsWithMatchesCached(GenomePropertiesResultsWithMatches):
+
+    def __init__(self, property_results_frame, step_results_frame, step_matches_frame, properties_tree):
+        self.property_results = property_results_frame
+        self.step_results = step_results_frame
+        self.step_matches = step_matches_frame
+        self.tree = properties_tree
+        self.sample_names = self.property_results.columns.tolist()
 
 
-def get_result_from_cache(default_results, results_key=None):
-    global RESULTS_CACHE
+def cache_result(result, redis_cache):
+    results_frames = [result.property_results,
+                      result.step_results,
+                      result.step_matches]
 
+    key = uuid.uuid4().hex
+    data = pd.to_msgpack(None, *results_frames)
+    redis_cache.set(key, data)
+    return key
+
+
+def get_result_cached_or_default(redis_cache, properties_tree, results_key=None, default_results=None):
     if results_key:
-        with LOCK:
-            result = RESULTS_CACHE.get(results_key)
+        result = get_result_from_cache(results_key, redis_cache, properties_tree)
     elif default_results is not None:
         result = default_results
     else:
         result = None
 
     return result
+
+
+def get_result_from_cache(key, redis_cache, properties_tree):
+    stored_dataframes = pd.read_msgpack(redis_cache.get(key))
+    property_results = stored_dataframes[0]
+    step_results = stored_dataframes[1]
+    step_matches = stored_dataframes[2]
+
+    return GenomePropertiesResultsWithMatchesCached(property_results,
+                                                    step_results,
+                                                    step_matches,
+                                                    properties_tree)
 
 
 if __name__ == '__main__':

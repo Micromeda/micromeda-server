@@ -1,3 +1,5 @@
+redis==3.2.1
+pandas==0.24.2
 pygenprop==0.5
 sqlalchemy==1.2.18
 webargs==4.1.3
