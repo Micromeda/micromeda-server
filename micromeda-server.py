@@ -22,7 +22,12 @@ from pygenprop.results import load_assignment_caches_from_database_with_matches
 from sqlalchemy import create_engine
 from werkzeug.utils import secure_filename
 
-REDIS_CACHE = redis.Redis(host='localhost', port=6379, db=0)  # TODO: Add these parameters from args or config file.
+try:
+    redis_url = os.environ['REDIS_URL']
+except KeyError:
+    REDIS_CACHE = redis.Redis()  # Attempt to use localhost redis with default parameters.
+else:
+    REDIS_CACHE = redis.from_url(redis_url)
 
 
 def create_app(config):
@@ -208,7 +213,7 @@ def parse_genome_properties_database(genome_properties_flat_file_path):
     :return: A genome properties tree object.
     """
     sanitized_path = sanitize_cli_path(genome_properties_flat_file_path)
-    with open(sanitized_path) as genome_properties_file:
+    with open(sanitized_path, encoding="utf-8") as genome_properties_file:
         genome_properties_tree = parse_genome_properties_flat_file(genome_properties_file)
     return genome_properties_tree
 
@@ -308,7 +313,7 @@ if __name__ == '__main__':
     parser.add_argument('-d', '--input_genome_properties_flat_file', metavar='DB', required=True,
                         help='The path to the genome properties database flat file.')
 
-    parser.add_argument('-k', '--secret_key', metavar='KEY', required=True, type=str,
+    parser.add_argument('-k', '--secret_key', metavar='KEY', type=str, default=os.urandom(24),
                         help='The secret key for the micromeda-server.')
 
     parser.add_argument('-i', '--input_genome_properties_assignment_file', metavar='ASSIGN', default=None,
