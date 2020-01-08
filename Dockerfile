@@ -10,4 +10,4 @@ RUN pip -q install ./pygenprop/
 COPY ./micromeda-server.py ./
 RUN chmod +x micromeda-server.py
 ADD https://raw.githubusercontent.com/ebi-pf-team/genome-properties/master/flatfiles/genomeProperties.txt ./
-# CMD ./micromeda-server.py -d ./genomeProperties.txt
+CMD ./micromeda-server.py -d ./genomeProperties.txt
