@@ -272,7 +272,7 @@ def cache_result(result, redis_cache):
 
     key = uuid.uuid4().hex
     data = pd.to_msgpack(None, *results_frames)
-    redis_cache.set(key, data)
+    redis_cache.set(key, data, ex=3600)
     return key
 
 

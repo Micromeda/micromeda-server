@@ -7,7 +7,7 @@ services:
     networks:
       - micromeda-net
     environment:
-      - BACKEND_URL=http://localhost:5000/
+      - BACKEND_URL=http://0.0.0.0:5000/
     ports:
       - 80:80
   micromeda-backend:
