@@ -21,6 +21,7 @@ from pygenprop.results import GenomePropertiesResultsWithMatches
 from pygenprop.results import load_assignment_caches_from_database_with_matches
 from sqlalchemy import create_engine
 from werkzeug.utils import secure_filename
+from flask_cors import CORS
 
 try:
     redis_url = os.environ['REDIS_URL']
@@ -38,6 +39,7 @@ def create_app(config):
     :return: The app object.
     """
     flask_app = Flask(__name__)
+    CORS(flask_app, supports_credentials=True)
 
     properties_tree = parse_genome_properties_database(config.input_genome_properties_flat_file)
 
