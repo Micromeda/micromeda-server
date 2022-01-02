@@ -12,17 +12,18 @@ import uuid
 from pygenprop.results import GenomePropertiesResultsWithMatches, load_results_from_serialization
 
 
-def cache_result(result: GenomePropertiesResultsWithMatches, redis_cache):
+def cache_result(result: GenomePropertiesResultsWithMatches, redis_cache, cache_ttl=3600):
     """
     Takes a GenomePropertiesResultsWithMatches, serializes it, and stores it in a redis cache.
 
+    :param cache_ttl: Number of seconds that the result should stay in the cache in seconds.
     :param result: A GenomePropertiesResultsWithMatches object
     :param redis_cache: A object representing a Redis cache
     :return: The hexadecimal key used to identify the serialized results in the cache
     """
     key = uuid.uuid4().hex
     data = result.to_serialization()
-    redis_cache.set(key, data, ex=3600)
+    redis_cache.set(key, data, ex=cache_ttl)
     return key
 
 

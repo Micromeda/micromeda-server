@@ -44,6 +44,9 @@ def create_app(config):
     flask_app.config['UPLOAD_FOLDER'] = sanitize_cli_path(config.uploads_folder)
     flask_app.config['PROPERTIES_TREE'] = properties_tree
 
+    # Cache TTL from CLI is in minutes. We convert it to seconds.
+    flask_app.config['CACHE_TTL'] = 60 * config.results_save_time
+
     if config.input_genome_properties_assignment_file is not None:
         default_results = extract_results_from_micromeda_file(config.input_genome_properties_assignment_file,
                                                               properties_tree)
@@ -68,7 +71,9 @@ def create_app(config):
             result = extract_results_from_micromeda_file(out_path, flask_app.config['PROPERTIES_TREE'])
             os.remove(out_path)
 
-            result_key = cache_result(result, REDIS_CACHE)
+            result_ttl = flask_app.config['CACHE_TTL']
+            flask_app.logger.info("Caching micromeda file for {} seconds".format(result_ttl))
+            result_key = cache_result(result, REDIS_CACHE, cache_ttl=result_ttl)
             response = jsonify({'result_key': result_key})
         else:
             response = flask_app.response_class(response='Upload failed', status=404)
@@ -198,6 +203,9 @@ if __name__ == '__main__':
 
     parser.add_argument('-u', '--uploads_folder', metavar='UP', default='./',
                         help='The path to a folder for FLASK uploads.')
+
+    parser.add_argument('-t', '--results_save_time', metavar='UP', default=360,
+                        help='Time, in minutes, that micromeda file results are saved.')
 
     parser.add_argument("--debug", action="store_true")
 
