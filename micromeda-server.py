@@ -146,7 +146,7 @@ def create_app(config):
 
         :param property_id: The identifier of the genome property.
         :param step_number: The step number of the step.
-        :return: A FASTA file encoding for
+        :return: A FASTA file encoding for a given property step.
         """
         global REDIS_CACHE
         result = get_result_cached_or_default(redis_cache=REDIS_CACHE,
