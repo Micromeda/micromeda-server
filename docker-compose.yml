@@ -1,0 +1,39 @@
+version: '3'
+services:
+  micromeda-frontend:
+    build: https://github.com/Micromeda/micromeda-client.git#develop
+    depends_on:
+      - micromeda-backend
+    networks:
+      - micromeda-net
+    environment:
+      - BACKEND_URL=http://0.0.0.0:5000/
+    ports:
+      - 80:80
+  micromeda-backend:
+    restart: on-failure
+    build: https://github.com/Micromeda/micromeda-server.git#develop
+    depends_on:
+      - redis_db
+    networks:
+      - micromeda-net
+    environment:
+      - REDIS_URL=redis://redis_db:6379
+    ports:
+      - 5000:5000
+  redis_db:
+    image: redis:alpine
+    expose:
+      - 6379
+    volumes:
+      - redis-data:/data
+    environment:
+      - ALLOW_EMPTY_PASSWORD=yes
+    networks:
+      - micromeda-net
+
+networks:
+  micromeda-net:
+
+volumes:
+  redis-data:
