@@ -1,7 +1,7 @@
 version: '3'
 services:
   micromeda-frontend:
-    build: https://github.com/Micromeda/micromeda-client.git#develop
+    build: https://github.com/Micromeda/micromeda-client.git
     depends_on:
       - micromeda-backend
     networks:
@@ -12,7 +12,7 @@ services:
       - 80:80
   micromeda-backend:
     restart: on-failure
-    build: https://github.com/Micromeda/micromeda-server.git#develop
+    build: https://github.com/Micromeda/micromeda-server.git
     depends_on:
       - redis_db
     networks:
