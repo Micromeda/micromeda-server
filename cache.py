@@ -41,13 +41,14 @@ def get_result_cached_or_default(redis_cache, properties_tree, results_key=None,
     if results_key:
         cached_results = redis_cache.get(results_key)
         if cached_results is not None:
-            result1 = load_results_from_serialization(cached_results, properties_tree)
+            result = load_results_from_serialization(cached_results, properties_tree)
         else:
-            result1 = None
-        result = result1
-    elif default_results is not None:
-        result = default_results
+            result = None
     else:
         result = None
+
+    if default_results is not None:
+        if result is None:
+            result = default_results
 
     return result
