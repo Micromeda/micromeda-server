@@ -1,7 +1,7 @@
 redis-py==3.5.3
 pandas==1.2
 numpy==1.16.6
-pygenprop==1.0
+pygenprop==1.1
 sqlalchemy==1.3.23
 Flask==2.1.2
 werkzeug==2.0.3
