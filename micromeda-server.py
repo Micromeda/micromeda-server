@@ -77,7 +77,7 @@ def create_app(config):
             result_key = cache_result(result, REDIS_CACHE, cache_ttl=result_ttl)
             response = jsonify({'result_key': result_key})
         else:
-            response = flask_app.response_class(response='Upload failed', status=404)
+            response = flask_app.response_class(response='Invalid file type. Please upload a .micro file.', status=415)
 
         return response
 
