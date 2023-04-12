@@ -43,6 +43,7 @@ def create_app(config):
     flask_app.secret_key = config.secret_key
     flask_app.config['UPLOAD_FOLDER'] = sanitize_cli_path(config.uploads_folder)
     flask_app.config['PROPERTIES_TREE'] = properties_tree
+    flask_app.config['MAX_CONTENT_LENGTH'] = 110 * 1000 * 1000
 
     # Cache TTL from CLI is in minutes. We convert it to seconds.
     flask_app.config['CACHE_TTL'] = 60 * config.results_save_time
