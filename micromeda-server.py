@@ -16,6 +16,7 @@ import redis
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
+from sqlalchemy import exc
 
 from utils import parse_genome_properties_database, extract_results_from_micromeda_file, allowed_file, sanitize_cli_path
 from cache import cache_result, get_result_cached_or_default
@@ -69,11 +70,16 @@ def create_app(config):
             filename = secure_filename(file.filename)
             out_path = os.path.join(flask_app.config['UPLOAD_FOLDER'], filename)
             file.save(out_path)
-            result = extract_results_from_micromeda_file(out_path, flask_app.config['PROPERTIES_TREE'])
-            os.remove(out_path)
+
+            try:
+                result = extract_results_from_micromeda_file(out_path, flask_app.config['PROPERTIES_TREE'])
+            except exc.DatabaseError:
+                return flask_app.response_class(response='Failed to parse Micromeda file', status=415)
+            finally:
+                os.remove(out_path)
 
             result_ttl = flask_app.config['CACHE_TTL']
-            flask_app.logger.info("Caching micromeda file for {} seconds".format(result_ttl))
+            flask_app.logger.info("Caching Micromeda file for {} seconds".format(result_ttl))
             result_key = cache_result(result, REDIS_CACHE, cache_ttl=result_ttl)
             response = jsonify({'result_key': result_key})
         else:
